@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **`IS DISTINCT FROM` live execution fixed (#377)** — live CUBRID rejects MySQL-style `NOT (a <=> b)` when the expression appears in a SELECT projection. The emulation now negates the NULL-safe `<=>` result as `(a <=> b) = 0`, which preserves the four-row SQL truth table and is valid CUBRID syntax. Added live truth-table coverage for both `IS DISTINCT FROM` and `IS NOT DISTINCT FROM`.
 - **create-release.yml: dropped `--target` from `gh release create`** — with an already-pushed tag (the normal tag-push trigger) `--verify-tag` already guarantees the tag exists, and passing `target_commitish` for an existing tag makes the Releases API return `422 Validation Failed`, so the first tag-triggered run of this workflow always failed. Verified live by the v0.4.0 tag attempt in cubrid-mcp-server.
 
 ### Docs
@@ -39,7 +40,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **Native ENUM type support (#343)** — `sqlalchemy_cubrid.ENUM` renders `ENUM('a', 'b', ...)` DDL. Plain `sa.Enum` maps to native ENUM via colspecs. Reflection parses the element list from `SHOW COLUMNS`. Verified live on CUBRID 10.2, 11.0, 11.4 (the docs previously and wrongly claimed CUBRID has no ENUM).
-- **`IS [NOT] DISTINCT FROM` emulation (#344)** — CUBRID lacks the SQL-standard syntax but supports the null-safe equal `<=>`. The dialect now renders `NOT (a <=> b)` / `a <=> b` — the same approach the MySQL dialect uses.
+- **`IS [NOT] DISTINCT FROM` emulation (#344)** — CUBRID lacks the SQL-standard syntax but supports the null-safe equal `<=>`. The dialect renders `(a <=> b) = 0` / `a <=> b`, preserving NULL-safe semantics in both predicates and SELECT projections.
 - **New explicit `cubrid+cubriddb://` URL and `[cubriddb]` install extra for the legacy CUBRIDdb driver (#276)** — the legacy `CUBRIDdb` C-extension driver (the driver bound to the bare `cubrid://` URL) can now be selected unambiguously via the explicit `cubrid+cubriddb://` URL, backed by a matching `cubriddb = ["CUBRID-Python"]` install extra. The bare `cubrid://` URL continues to bind CUBRIDdb — no behavior change to any existing URL. For new projects the pure-Python `pycubrid` driver is the recommended choice: install `sqlalchemy-cubrid[pycubrid]` and use `cubrid+pycubrid://` (installs with pip alone, no C toolchain).
 - **Native Alembic `ALTER COLUMN` type changes and column renames (#305)** — `CubridImpl.alter_column()` previously raised `NotImplementedError` for column type changes and renames, forcing every such migration through `batch_alter_table` (full table recreate). CUBRID in fact supports MySQL-compatible `ALTER TABLE ... MODIFY`, `CHANGE`, and `RENAME COLUMN`, so the dialect now emits native DDL: a type change compiles to `MODIFY`, a rename to `RENAME COLUMN ... TO ...`, and a combined rename + type change to a single `CHANGE`. Type conversions are governed by the server's `alter_table_change_type_strict` system parameter (incompatible/truncating conversions error when `yes`, may silently truncate when `no`); `batch_alter_table` remains available as a fallback for genuinely lossy conversions. Added SQL-emission tests covering all three DDL forms.
 
