@@ -389,3 +389,44 @@ class CubridImpl(DefaultImpl):
         if unbounded_name == "STRING" or unbounded_name.endswith("STRING"):
             return getattr(unbounded_side, "length", None) is None
         return False
+
+    def create_index(self, index: Any, **kw: Any) -> None:
+        """Error on UNIQUE index that collides with an FK auto-index.
+
+        CUBRID auto-creates a B-tree index for FK columns.  A subsequent
+        ``CREATE UNIQUE INDEX`` on the same columns fails (errno=-272),
+        and ``ALTER TABLE ADD CONSTRAINT UNIQUE`` also fails.
+
+        Non-unique indexes are passed through — CUBRID accepts them.
+
+        For the Alembic path the table metadata from ``op.create_index()``
+        may lack FK info, so we reflect the live schema to check.
+        """
+        from sqlalchemy import inspect as sa_inspect
+        from sqlalchemy.exc import CompileError
+
+        table = index.table
+        if index.unique and table is not None and table.name:
+            insp = sa_inspect(self.connection)
+            fks = insp.get_foreign_keys(table.name, schema=getattr(table, "schema", None))
+            idx_cols = tuple(c.name for c in index.columns)
+            for fk in fks:
+                fk_cols = tuple(fk.get("constrained_columns", []))
+                if idx_cols == fk_cols:
+                    cols = ", ".join(idx_cols)
+                    if len(idx_cols) == 1:
+                        hint = (
+                            "Declare the column with unique=True "
+                            "instead of using a separate Index(..., unique=True)."
+                        )
+                    else:
+                        hint = (
+                            "Use a table-level UniqueConstraint(%s) "
+                            "instead of Index(..., unique=True)." % cols
+                        )
+                    raise CompileError(
+                        "CUBRID cannot create a UNIQUE index on columns "
+                        "that already have an FK auto-index (%s). %s" % (cols, hint)
+                    )
+
+        super().create_index(index, **kw)

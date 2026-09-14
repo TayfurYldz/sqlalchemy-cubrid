@@ -614,6 +614,63 @@ class CubridDDLCompiler(compiler.DDLCompiler):
             ),
         )
 
+    def visit_create_index(  # type: ignore[override]
+        self,
+        create: Any,
+        include_schema: bool = False,
+        include_table_schema: bool = True,
+        **kw: Any,
+    ) -> str:
+        """Handle CUBRID FK auto-index collision for UNIQUE indexes.
+
+        CUBRID creates a non-unique B-tree index for every FK column set.
+        A subsequent non-unique ``CREATE INDEX`` on the same columns is
+        accepted (redundant but harmless).  However, ``CREATE UNIQUE INDEX``
+        fails with::
+
+            Index "fk_..." already defined for class "dba.table". (errno=-272)
+
+        ``ALTER TABLE ... ADD CONSTRAINT UNIQUE`` also fails on the same
+        column set, so the only way to get uniqueness on FK columns is via
+        an inline ``UNIQUE`` keyword in ``CREATE TABLE``.
+
+        This hook only intervenes for **UNIQUE** indexes that exactly match
+        an FK column set — raising a clear ``CompileError`` with guidance.
+        Non-unique indexes are passed through to CUBRID as-is.
+
+        Closes #355.
+        """
+        index = create.element
+        table = index.table
+
+        if index.unique:
+            idx_col_names = tuple(c.name for c in index.columns)
+            for fk in table.foreign_key_constraints:
+                fk_col_names = tuple(c.parent.name for c in fk.elements)
+                if idx_col_names == fk_col_names:
+                    cols = ", ".join(idx_col_names)
+                    if len(idx_col_names) == 1:
+                        hint = (
+                            "Declare the column with unique=True "
+                            "instead of using a separate Index(..., unique=True)."
+                        )
+                    else:
+                        hint = (
+                            "Use a table-level UniqueConstraint(%s) "
+                            "instead of Index(..., unique=True)." % cols
+                        )
+                    raise CompileError(
+                        "CUBRID cannot create a UNIQUE index on columns "
+                        "that already have an FK auto-index (%s). %s" % (cols, hint)
+                    )
+
+        return super().visit_create_index(
+            create,
+            include_schema=include_schema,
+            include_table_schema=include_table_schema,
+            **kw,
+        )
+
 
 class CubridTypeCompiler(compiler.GenericTypeCompiler):
     """TypeCompiler for CUBRID data types."""
