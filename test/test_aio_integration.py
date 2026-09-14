@@ -29,23 +29,37 @@ def _async_url() -> str:
 
 
 def _can_connect_async() -> bool:
-    try:
+    async def _probe() -> bool:
         engine = create_async_engine(_async_url())
-
-        async def _probe() -> bool:
+        try:
             async with engine.connect() as conn:
                 _ = await conn.execute(text("SELECT 1"))
-            await engine.dispose()
             return True
+        finally:
+            await engine.dispose()
 
-        return asyncio.get_event_loop().run_until_complete(_probe())
+    try:
+        return asyncio.run(_probe())
     except Exception:
         return False
 
 
+# In CI, CUBRID is intentionally provisioned — connectivity failure
+# should be a hard test error, not a silent skip.  Locally, developers
+# without a running CUBRID instance get a skip.
+_in_ci = os.environ.get("CI", "").lower() in ("true", "1")
+_available = _can_connect_async()
+if _in_ci and not _available:
+    pytest.fail(
+        "CUBRID async instance is NOT reachable but CI=true — "
+        "integration tests must not be silently skipped in CI. "
+        "Check the CUBRID service container.",
+        pytrace=False,
+    )
+
 pytestmark = [
     pytest.mark.skipif(
-        not _can_connect_async(),
+        not _available,
         reason="CUBRID async instance not available (set CUBRID_TEST_URL)",
     ),
     pytest.mark.asyncio,
